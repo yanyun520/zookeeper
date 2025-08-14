@@ -20,9 +20,10 @@ package org.apache.zookeeper.common;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import io.netty.buffer.UnpooledByteBufAllocator;
+import io.netty.handler.ssl.SslContext;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -30,7 +31,6 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Path;
 import java.security.NoSuchAlgorithmException;
-import java.security.Security;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -45,6 +45,7 @@ import java.util.function.Supplier;
 import javax.net.ssl.HandshakeCompletedEvent;
 import javax.net.ssl.HandshakeCompletedListener;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
@@ -57,6 +58,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
 
 public class X509UtilTest extends BaseX509ParameterizedTestCase {
 
@@ -86,10 +88,6 @@ public class X509UtilTest extends BaseX509ParameterizedTestCase {
         System.clearProperty(x509Util.getCipherSuitesProperty());
         System.clearProperty(x509Util.getSslProtocolProperty());
         System.clearProperty(x509Util.getSslHandshakeDetectionTimeoutMillisProperty());
-        System.clearProperty("com.sun.net.ssl.checkRevocation");
-        System.clearProperty("com.sun.security.enableCRLDP");
-        Security.setProperty("ocsp.enable", Boolean.FALSE.toString());
-        Security.setProperty("com.sun.security.enableCRLDP", Boolean.FALSE.toString());
         System.clearProperty(ServerCnxnFactory.ZOOKEEPER_SERVER_CNXN_FACTORY);
         System.clearProperty(ZKClientConfig.ZOOKEEPER_CLIENT_CNXN_SOCKET);
         x509Util.close();
@@ -221,49 +219,6 @@ public class X509UtilTest extends BaseX509ParameterizedTestCase {
         setCustomCipherSuites();
         SSLSocket sslSocket = x509Util.createSSLSocket();
         assertArrayEquals(customCipherSuites, sslSocket.getEnabledCipherSuites());
-    }
-
-    // It would be great to test the value of PKIXBuilderParameters#setRevocationEnabled but it does not appear to be
-    // possible
-    @ParameterizedTest
-    @MethodSource("data")
-    @Timeout(value = 5)
-    public void testCRLEnabled(
-            X509KeyType caKeyType, X509KeyType certKeyType, String keyPassword, Integer paramIndex)
-            throws Exception {
-        init(caKeyType, certKeyType, keyPassword, paramIndex);
-        System.setProperty(x509Util.getSslCrlEnabledProperty(), "true");
-        x509Util.getDefaultSSLContext();
-        assertTrue(Boolean.valueOf(System.getProperty("com.sun.net.ssl.checkRevocation")));
-        assertTrue(Boolean.valueOf(System.getProperty("com.sun.security.enableCRLDP")));
-        assertFalse(Boolean.valueOf(Security.getProperty("ocsp.enable")));
-    }
-
-    @ParameterizedTest
-    @MethodSource("data")
-    @Timeout(value = 5)
-    public void testCRLDisabled(
-            X509KeyType caKeyType, X509KeyType certKeyType, String keyPassword, Integer paramIndex)
-            throws Exception {
-        init(caKeyType, certKeyType, keyPassword, paramIndex);
-        x509Util.getDefaultSSLContext();
-        assertFalse(Boolean.valueOf(System.getProperty("com.sun.net.ssl.checkRevocation")));
-        assertFalse(Boolean.valueOf(System.getProperty("com.sun.security.enableCRLDP")));
-        assertFalse(Boolean.valueOf(Security.getProperty("ocsp.enable")));
-    }
-
-    @ParameterizedTest
-    @MethodSource("data")
-    @Timeout(value = 5)
-    public void testOCSPEnabled(
-            X509KeyType caKeyType, X509KeyType certKeyType, String keyPassword, Integer paramIndex)
-            throws Exception {
-        init(caKeyType, certKeyType, keyPassword, paramIndex);
-        System.setProperty(x509Util.getSslOcspEnabledProperty(), "true");
-        x509Util.getDefaultSSLContext();
-        assertTrue(Boolean.valueOf(System.getProperty("com.sun.net.ssl.checkRevocation")));
-        assertTrue(Boolean.valueOf(System.getProperty("com.sun.security.enableCRLDP")));
-        assertTrue(Boolean.valueOf(Security.getProperty("ocsp.enable")));
     }
 
     @ParameterizedTest
@@ -738,6 +693,42 @@ public class X509UtilTest extends BaseX509ParameterizedTestCase {
         zkConfig.setProperty(clientX509Util.getSslContextSupplierClassProperty(), SslContextSupplier.class.getName());
         final SSLContext sslContext = clientX509Util.createSSLContext(zkConfig);
         assertEquals(SSLContext.getDefault(), sslContext);
+    }
+
+    @ParameterizedTest
+    @MethodSource("data")
+    public void testCreateSSLContext_ocspWithJreProvider(
+            X509KeyType caKeyType, X509KeyType certKeyType, String keyPassword, Integer paramIndex)
+            throws Exception {
+        init(caKeyType, certKeyType, keyPassword, paramIndex);
+        ZKConfig zkConfig = new ZKConfig();
+        try (ClientX509Util clientX509Util = new ClientX509Util();) {
+            zkConfig.setProperty(clientX509Util.getSslOcspEnabledProperty(), "true");
+            // Must not throw IllegalArgumentException
+            clientX509Util.createSSLContext(zkConfig);
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("data")
+    public void testCreateSSLContext_hostnameVerificationNoCustomTrustStore(X509KeyType caKeyType,
+            X509KeyType certKeyType, String keyPassword, Integer paramIndex) throws Exception {
+        init(caKeyType, certKeyType, keyPassword, paramIndex);
+        // No truststore
+        System.clearProperty(x509Util.getSslTruststoreLocationProperty());
+        // Verify client hostname too
+        System.setProperty(x509Util.getSslClientHostnameVerificationEnabledProperty(), "true");
+        ZKConfig zkConfig = new ZKConfig();
+        try (ClientX509Util clientX509Util = new ClientX509Util();) {
+            UnpooledByteBufAllocator byteBufAllocator = new UnpooledByteBufAllocator(false);
+            SslContext clientContext = clientX509Util.createNettySslContextForClient(zkConfig);
+            SSLEngine clientEngine = clientContext.newEngine(byteBufAllocator);
+            assertEquals(clientEngine.getSSLParameters().getEndpointIdentificationAlgorithm(), "HTTPS");
+
+            SslContext serverContext = clientX509Util.createNettySslContextForServer(zkConfig);
+            SSLEngine serverEngine = serverContext.newEngine(byteBufAllocator);
+            assertEquals(serverEngine.getSSLParameters().getEndpointIdentificationAlgorithm(), "HTTPS");
+        }
     }
 
     private static void forceClose(Socket s) {
