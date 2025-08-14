@@ -142,8 +142,11 @@ public class QuorumCnxManager {
      */
     final long mySid;
     final int socketTimeout;
+    //其他服务器集群中的节点信息
     final Map<Long, QuorumPeer.QuorumServer> view;
+    //是否包含所有的监听ip级
     final boolean listenOnAllIPs;
+    //连接池执行
     private ThreadPoolExecutor connectionExecutor;
     private final Set<Long> inprogressConnections = Collections.synchronizedSet(new HashSet<>());
     private QuorumAuthServer authServer;

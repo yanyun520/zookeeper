@@ -146,6 +146,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     private JvmPauseMonitor jvmPauseMonitor;
 
+
     private final AtomicBoolean suspended = new AtomicBoolean(false);
 
     public static final class AddressTuple {

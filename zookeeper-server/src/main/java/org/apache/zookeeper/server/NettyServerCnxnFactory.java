@@ -597,7 +597,7 @@ public class NettyServerCnxnFactory extends ServerCnxnFactory {
         }
     }
 
-    @Override
+    @Overrides
     public void closeAll(ServerCnxn.DisconnectReason reason) {
         LOG.debug("closeAll()");
 

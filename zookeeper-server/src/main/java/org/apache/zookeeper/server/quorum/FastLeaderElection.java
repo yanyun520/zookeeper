@@ -639,8 +639,9 @@ public class FastLeaderElection implements Election {
         this.self = self;
         proposedLeader = -1;
         proposedZxid = -1;
-
+        //用于存放待发送给所有其他服务器的选票
         sendqueue = new LinkedBlockingQueue<>();
+        //用于存放从网络上已接收并解析好的选票。
         recvqueue = new LinkedBlockingQueue<>();
         this.messenger = new Messenger(manager);
     }
@@ -920,6 +921,7 @@ public class FastLeaderElection implements Election {
              * if v.electionEpoch == logicalclock. The current participant uses recvset to deduce on whether a majority
              * of participants has voted for it.
              */
+            //
             Map<Long, Vote> recvset = new HashMap<>();
 
             /*
