@@ -121,6 +121,8 @@ public class QuorumCnxManager {
 
     /*
      * Protocol identifier used among peers (must be a negative number for backward compatibility reasons)
+     – V1：单地址 → “host:port”
+     – V2：多地址 → “host1:port1|host2:port2|…”
      */
     // the following protocol version was sent in every connection initiation message since ZOOKEEPER-107 released in 3.5.0
     public static final long PROTOCOL_VERSION_V1 = -65536L;
@@ -469,6 +471,20 @@ public class QuorumCnxManager {
 
     }
 
+    //集群服务器之间的通讯格式
+
+    /**
+     ---
+
+     [ 8 字节  protocolVersion  ]   long
+     [ 8 字节  mySid            ]   long
+     [ 4 字节  addrBytes.length ]   int
+     [ n 字节  addrBytes        ]   byte[]
+
+     ---
+     总共 20 字节起步，后面跟着一个变长的地址串
+
+     **/
     private boolean startConnection(Socket sock, Long sid) throws IOException {
         DataOutputStream dout = null;
         DataInputStream din = null;
@@ -486,8 +502,8 @@ public class QuorumCnxManager {
             // feature is enabled. During rolling upgrade, we must make sure that all the servers can
             // understand the protocol version we use to avoid multiple partitions. see ZOOKEEPER-3720
             long protocolVersion = self.isMultiAddressEnabled() ? PROTOCOL_VERSION_V2 : PROTOCOL_VERSION_V1;
-            dout.writeLong(protocolVersion);
-            dout.writeLong(self.getMyId());
+            dout.writeLong(protocolVersion); // 8字节
+            dout.writeLong(self.getMyId());  // 8字节
 
             // now we send our election address. For the new protocol version, we can send multiple addresses.
             Collection<InetSocketAddress> addressesToSend = protocolVersion == PROTOCOL_VERSION_V2
@@ -497,9 +513,9 @@ public class QuorumCnxManager {
             String addr = addressesToSend.stream()
                     .map(NetUtils::formatInetAddr).collect(Collectors.joining("|"));
             byte[] addr_bytes = addr.getBytes(UTF_8);
-            dout.writeInt(addr_bytes.length);
+            dout.writeInt(addr_bytes.length); // 4字节
             dout.write(addr_bytes);
-            dout.flush();
+            dout.flush();  //刷新，发送
 
             din = new DataInputStream(new BufferedInputStream(sock.getInputStream()));
         } catch (IOException e) {
@@ -555,9 +571,11 @@ public class QuorumCnxManager {
     public void receiveConnection(final Socket sock) {
         DataInputStream din = null;
         try {
+            //从socket中读取数据
             din = new DataInputStream(new BufferedInputStream(sock.getInputStream()));
 
             LOG.debug("Sync handling of connection request received from: {}", sock.getRemoteSocketAddress());
+            //处理socket通道数据
             handleConnection(sock, din);
         } catch (IOException e) {
             LOG.error("Exception handling connection, addr: {}, closing server connection", sock.getRemoteSocketAddress());
@@ -600,16 +618,33 @@ public class QuorumCnxManager {
 
     }
 
+    //读取发送选票的机器
+    //永远只在 sid 大的一端保留 socket；小的一端主动关闭后，再去发起反向连接。
+    //这样确保任意两个节点之间只会存在一条 TCP 连接，避免双链。
+    //远端节点 A(sid=3) -> 本节点 B(myId=5)
+    //------------------------------------------------
+    //1. A 主动 connect  ->  B.accept()
+    //2. B.handleConnection()
+    //   ├─ 解析得到 sid=3
+    //   ├─ 认证
+    //   ├─ 3 < 5   →  B 认为自己赢
+    //   │      └─ closeSocket()
+    //   │      └─ B.connectOne(3)  （B 再去连 A）
+    //   └─ 如果 3 > 5 → B 认输，保留 socket，启动 SendWorker+RecvWorker
     private void handleConnection(Socket sock, DataInputStream din) throws IOException {
         Long sid = null, protocolVersion = null;
         MultipleAddresses electionAddr = null;
 
         try {
+            //获取当前的版本号
             protocolVersion = din.readLong();
+            // 老协议直接把 sid 当版本号发过来
             if (protocolVersion >= 0) { // this is a server id and not a protocol version
                 sid = protocolVersion;
             } else {
+                // 新协议先读 sid，再读地址列表
                 try {
+                    //
                     InitialMessage init = InitialMessage.parse(protocolVersion, din);
                     sid = init.sid;
                     if (!init.electionAddr.isEmpty()) {
@@ -641,6 +676,7 @@ public class QuorumCnxManager {
         // do authenticating learner
         authServer.authenticate(sock, din);
         //If wins the challenge, then close the new connection.
+        // 我赢：关闭这条由对方发起的 socket，然后“反过来”连它
         if (sid < self.getMyId()) {
             /*
              * This replica might still believe that the connection to sid is
@@ -648,7 +684,7 @@ public class QuorumCnxManager {
              * new connection.
              */
             SendWorker sw = senderWorkerMap.get(sid);
-            if (sw != null) {
+            if (sw != null) {   // 如果已有连接，先停掉
                 sw.finish();
             }
 
@@ -659,21 +695,24 @@ public class QuorumCnxManager {
             closeSocket(sock);
 
             if (electionAddr != null) {
-                connectOne(sid, electionAddr);
+                connectOne(sid, electionAddr);  // 使用对端声明的地址
             } else {
-                connectOne(sid);
+                connectOne(sid);  // 从本地 view 里查地址
             }
 
         } else if (sid == self.getMyId()) {
+            // 自己连自己：配置错误或 bug，直接警告
             // we saw this case in ZOOKEEPER-2164
             LOG.warn("We got a connection request from a server with our own ID. "
                      + "This should be either a configuration error, or a bug.");
         } else { // Otherwise start worker threads to receive data.
+            // sid > self.getMyId()  =>  我输：保留这条连接，启动 Send/Recv 线程
+            //启动 Send/Recv 线程
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
             sw.setRecv(rw);
 
-            SendWorker vsw = senderWorkerMap.get(sid);
+            SendWorker vsw = senderWorkerMap.get(sid); // 原子替换
 
             if (vsw != null) {
                 vsw.finish();
@@ -1041,6 +1080,7 @@ public class QuorumCnxManager {
             @Override
             public void run() {
                 try {
+                    //设置集群peer服务器线程名 ListenerHandler-集群服务器的ip地址
                     Thread.currentThread().setName("ListenerHandler-" + address);
                     acceptConnections();
                     try {
@@ -1402,6 +1442,7 @@ public class QuorumCnxManager {
                      */
                     final byte[] msgArray = new byte[length];
                     din.readFully(msgArray, 0, length);
+                    //进行投票
                     addToRecvQueue(new Message(ByteBuffer.wrap(msgArray), sid));
                 }
             } catch (Exception e) {
