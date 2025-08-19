@@ -532,9 +532,11 @@ public class FastLeaderElection implements Election {
         Messenger(QuorumCnxManager manager) {
 
             this.ws = new WorkerSender(manager, "WorkerSender[myid=" + self.getMyId() + "]");
+            //设置为守护线程
             this.ws.setDaemon(true);
 
             this.wr = new WorkerReceiver(manager, "WorkerReceiver[myid=" + self.getMyId() + "]");
+            //设置为守护线程
             this.wr.setDaemon(true);
         }
 
@@ -643,6 +645,7 @@ public class FastLeaderElection implements Election {
         sendqueue = new LinkedBlockingQueue<>();
         //用于存放从网络上已接收并解析好的选票。
         recvqueue = new LinkedBlockingQueue<>();
+        //创建消息发送和接受线程
         this.messenger = new Messenger(manager);
     }
 

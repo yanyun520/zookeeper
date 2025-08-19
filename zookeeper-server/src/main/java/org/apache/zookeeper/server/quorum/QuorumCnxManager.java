@@ -96,6 +96,9 @@ import org.slf4j.LoggerFactory;
  *
  */
 
+/**
+  集群连接处理器
+ */
 public class QuorumCnxManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(QuorumCnxManager.class);
