@@ -1752,6 +1752,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                     si.setLargeRequestSize(length);
                 }
                 si.setOwner(ServerCnxn.me);
+
+                //这里才是核心
+
                 submitRequest(si);
             }
         }

@@ -88,11 +88,16 @@ public class Learner {
 
     }
 
+    // 本节点配置 / 当前投票 / epoch 等运行时状态
     QuorumPeer self;
+
+    // 本节点真正对外服务的 ZKServer（FollowerZK 或 ObserverZK）
     LearnerZooKeeperServer zk;
 
     protected BufferedOutputStream bufferedOutput;
 
+
+    // 与 Leader 的 TCP 连接
     protected Socket sock;
     protected MultipleAddresses leaderAddr;
     protected AtomicBoolean sockBeingClosed = new AtomicBoolean(false);
@@ -104,8 +109,14 @@ public class Learner {
         return sock;
     }
 
+
+    // 把待发送包异步刷给 Leader
     LearnerSender sender = null;
+
+    // 读 Leader 的数据流
     protected InputArchive leaderIs;
+
+    // 写 Leader 的数据流
     protected OutputArchive leaderOs;
     /** the protocol version of the leader */
     protected int leaderProtocolVersion = 0x01;

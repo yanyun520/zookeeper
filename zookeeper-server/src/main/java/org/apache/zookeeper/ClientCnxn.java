@@ -182,8 +182,11 @@ public class ClientCnxn {
      */
     private boolean readOnly;
 
+
+    //发送线程，负责管理管道数据发发送
     final SendThread sendThread;
 
+    //事件线程，负责处理watch事件
     final EventThread eventThread;
 
     /**

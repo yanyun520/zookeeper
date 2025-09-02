@@ -653,7 +653,7 @@ public class QuorumCnxManager {
                     }
                     LOG.debug("Initial message parsed by {}: {}", self.getMyId(), init.toString());
                 } catch (InitialMessage.InitialMessageException ex) {
-                    LOG.error("Initial message parsing error!", ex);
+                    LOG.error("Initial message psarsing error!", ex);
                     closeSocket(sock);
                     return;
                 }

@@ -154,6 +154,12 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         }
     }
 
+    /**
+     *
+     * @param outgoingQueue
+     * @param tunneledAuthInProgress
+     * @return
+     */
     private Packet findSendablePacket(LinkedBlockingDeque<Packet> outgoingQueue, boolean tunneledAuthInProgress) {
         if (outgoingQueue.isEmpty()) {
             return null;

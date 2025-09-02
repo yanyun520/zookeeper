@@ -502,7 +502,12 @@ public class NettyServerCnxn extends ServerCnxn {
                             RequestHeader h = new RequestHeader();
                             ByteBufferInputStream.byteBuffer2Record(bb, h);
                             RequestRecord request = RequestRecord.fromBytes(bb.slice());
+
+
+                            //这里才是核心
                             zks.processPacket(this, h, request);
+
+
                         } else {
                             LOG.debug("got conn req request from {}", getRemoteSocketAddress());
                             BinaryInputArchive bia = BinaryInputArchive.getArchive(new ByteBufferInputStream(bb));
